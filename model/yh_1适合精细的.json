@@ -1,0 +1,198 @@
+{
+  "46": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "K采样器选择"
+    }
+  },
+  "47": {
+    "inputs": {
+      "scheduler": "simple",
+      "steps": 20,
+      "denoise": 1,
+      "model": [
+        "57",
+        0
+      ]
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "基础调度器"
+    }
+  },
+  "48": {
+    "inputs": {
+      "guidance": 6,
+      "conditioning": [
+        "60",
+        0
+      ]
+    },
+    "class_type": "FluxGuidance",
+    "_meta": {
+      "title": "Flux引导"
+    }
+  },
+  "49": {
+    "inputs": {
+      "width": 720,
+      "height": 1280,
+      "length": 101,
+      "batch_size": 1
+    },
+    "class_type": "EmptyHunyuanLatentVideo",
+    "_meta": {
+      "title": "空Latent视频（混元）"
+    }
+  },
+  "50": {
+    "inputs": {
+      "model": [
+        "51",
+        0
+      ],
+      "conditioning": [
+        "48",
+        0
+      ]
+    },
+    "class_type": "BasicGuider",
+    "_meta": {
+      "title": "基础引导"
+    }
+  },
+  "51": {
+    "inputs": {
+      "shift": 7,
+      "model": [
+        "57",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "模型采样算法SD3"
+    }
+  },
+  "52": {
+    "inputs": {
+      "vae_name": "hunyuan_video_vae_bf16.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "VAE加载器"
+    }
+  },
+  "53": {
+    "inputs": {
+      "clip_name1": "clip_l.safetensors",
+      "clip_name2": "llava_llama3_fp8_scaled.safetensors",
+      "type": "hunyuan_video",
+      "device": "default"
+    },
+    "class_type": "DualCLIPLoader",
+    "_meta": {
+      "title": "双CLIP加载器"
+    }
+  },
+  "54": {
+    "inputs": {
+      "tile_size": 256,
+      "overlap": 64,
+      "temporal_size": 64,
+      "temporal_overlap": 8,
+      "samples": [
+        "59",
+        0
+      ],
+      "vae": [
+        "52",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeTiled",
+    "_meta": {
+      "title": "VAE分块解码"
+    }
+  },
+  "57": {
+    "inputs": {
+      "unet_name": "hunyuan_video_t2v_720p_bf16.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "UNET加载器"
+    }
+  },
+  "59": {
+    "inputs": {
+      "noise": [
+        "62",
+        0
+      ],
+      "guider": [
+        "50",
+        0
+      ],
+      "sampler": [
+        "46",
+        0
+      ],
+      "sigmas": [
+        "47",
+        0
+      ],
+      "latent_image": [
+        "49",
+        0
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "自定义采样器(高级)"
+    }
+  },
+  "60": {
+    "inputs": {
+      "text": "anime style anime girl with massive fennec ears and one big fluffy tail, she has blonde hair long hair blue eyes wearing a pink sweater and a long blue skirt walking in a beautiful outdoor scenery with snow mountains in the background",
+      "clip": [
+        "53",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP文本编码器"
+    }
+  },
+  "61": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "fps": 24,
+      "lossless": false,
+      "quality": 80,
+      "method": "default",
+      "images": [
+        "54",
+        0
+      ]
+    },
+    "class_type": "SaveAnimatedWEBP",
+    "_meta": {
+      "title": "保存WEBP"
+    }
+  },
+  "62": {
+    "inputs": {
+      "noise_seed": 1
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "随机噪波"
+    }
+  }
+}

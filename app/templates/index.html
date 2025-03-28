@@ -1,0 +1,372 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <!-- 移除左侧任务队列，使用全宽显示监控墙 -->
+    <div class="col-12">
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h4>视频任务监控墙</h4>
+                <div>
+                    <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#videoGeneratorModal">
+                        <i class="bi bi-plus-circle me-1"></i>新建任务
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary ms-2" id="refreshTasksBtn">
+                        <i class="bi bi-arrow-clockwise me-1"></i>刷新
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="taskMonitorWall" class="row g-3">
+                    <!-- 任务卡片将在这里动态生成 -->
+                    <div class="col-12 text-center text-muted py-5" id="noTasksMessage">
+                        <i class="bi bi-camera-video-off" style="font-size: 3rem;"></i>
+                        <p class="mt-3">暂无任务，点击"新建任务"按钮创建</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 视频生成控制面板模态框 -->
+<div class="modal fade" id="videoGeneratorModal" tabindex="-1" aria-labelledby="videoGeneratorModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="videoGeneratorModalLabel">视频生成控制面板</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="generatorForm">
+                    <div class="mb-3">
+                        <label for="content" class="form-label">输入文案</label>
+                        <textarea class="form-control" id="content" rows="3" required></textarea>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="style" class="form-label">选择风格</label>
+                        <select class="form-select" id="style" required>
+                            <option value="">请选择风格</option>
+                            <option value="ancient">古风</option>
+                            <option value="anime">动漫</option>
+                            <option value="cute">可爱</option>
+                            <option value="modern">现代</option>
+                            <option value="nature">自然</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="numSegments" class="form-label">片段数量</label>
+                        <select class="form-select" id="numSegments" required>
+                            <option value="1">1个</option>
+                            <option value="2">2个</option>
+                            <option value="3" selected>3个</option>
+                            <option value="4">4个</option>
+                            <option value="5">5个</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="model" class="form-label">选择模型</label>
+                        <select class="form-select" id="model" required>
+                            <option value="">请选择模型</option>
+                            {% for model in models %}
+                            <option value="{{ model.id }}">{{ model.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary w-100">生成提示词</button>
+                </form>
+            </div>
+            
+            <!-- 提示词显示区域 -->
+            <div id="promptsContainer" class="modal-body border-top" style="display: none;">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h6 class="mb-0">生成的提示词</h6>
+                    <button id="regeneratePrompts" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-arrow-clockwise me-1"></i>重新生成
+                    </button>
+                </div>
+                <div id="promptsList" class="list-group mb-3">
+                    <!-- 提示词将在这里动态生成 -->
+                </div>
+                <button id="generateVideos" class="btn btn-success w-100">开始生成视频</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 视频预览模态框 -->
+<div class="modal fade" id="videoPreviewModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">视频预览</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0">预览播放器</h6>
+                        <div class="btn-group">
+                            <button class="btn btn-sm btn-outline-primary" id="prevSegment">上一段</button>
+                            <button class="btn btn-sm btn-outline-primary" id="nextSegment">下一段</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <video id="previewPlayer" controls class="w-100">
+                            <source src="" type="video/mp4">
+                        </video>
+                        <div class="mt-3">
+                            <div class="d-flex justify-content-between mb-2">
+                                <span id="currentTime">00:00</span>
+                                <span id="duration">00:00</span>
+                            </div>
+                            <input type="range" class="form-range" id="videoProgress" min="0" max="100" value="0">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 片段编辑模态框 -->
+<div class="modal fade" id="segmentEditModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">编辑视频片段</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">片段时长（秒）</label>
+                    <input type="number" class="form-control" id="segmentDuration" min="1" max="30" value="5">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">提示词</label>
+                    <textarea class="form-control" id="segmentPrompt" rows="3"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="saveSegmentEdit">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 添加设置模态框 -->
+<div class="modal fade" id="settingsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">视频设置</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <ul class="nav nav-tabs" role="tablist">
+                    <li class="nav-item">
+                        <a class="nav-link active" data-bs-toggle="tab" href="#subtitleSettings">字幕设置</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" data-bs-toggle="tab" href="#voiceSettings">配音设置</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" data-bs-toggle="tab" href="#transitionSettings">转场设置</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" data-bs-toggle="tab" href="#filterSettings">滤镜效果</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" data-bs-toggle="tab" href="#clipSettings">剪辑设置</a>
+                    </li>
+                </ul>
+                
+                <div class="tab-content mt-3">
+                    <!-- 字幕设置 -->
+                    <div class="tab-pane fade show active" id="subtitleSettings">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">字体</label>
+                                    <select class="form-select" id="subtitleFont">
+                                        <option value="SimHei">黑体</option>
+                                        <option value="Microsoft YaHei">微软雅黑</option>
+                                        <option value="KaiTi">楷体</option>
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">字体大小</label>
+                                    <input type="range" class="form-range" id="subtitleSize" min="12" max="48" value="24">
+                                    <div class="text-center" id="subtitleSizeValue">24px</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">字体颜色</label>
+                                    <input type="color" class="form-control form-control-color" id="subtitleColor" value="#ffffff">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">描边颜色</label>
+                                    <input type="color" class="form-control form-control-color" id="subtitleStrokeColor" value="#000000">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">描边宽度</label>
+                                    <input type="range" class="form-range" id="subtitleStrokeWidth" min="0" max="5" value="2">
+                                    <div class="text-center" id="strokeWidthValue">2px</div>
+                                </div>
+                            </div>
+                            <div class="col-12">
+                                <div class="mb-3">
+                                    <label class="form-label">字幕位置</label>
+                                    <div class="text-center">
+                                        <div class="btn-group" role="group">
+                                            <input type="radio" class="btn-check" name="subtitlePosition" id="posTop" value="top">
+                                            <label class="btn btn-outline-primary" for="posTop">顶部</label>
+                                            
+                                            <input type="radio" class="btn-check" name="subtitlePosition" id="posMiddle" value="middle">
+                                            <label class="btn btn-outline-primary" for="posMiddle">中间</label>
+                                            
+                                            <input type="radio" class="btn-check" name="subtitlePosition" id="posBottom" value="bottom" checked>
+                                            <label class="btn btn-outline-primary" for="posBottom">底部</label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 配音设置 -->
+                    <div class="tab-pane fade" id="voiceSettings">
+                        <div class="mb-3">
+                            <label class="form-label">选择声音</label>
+                            <select class="form-select" id="voiceSelect">
+                                <option value="zh-CN-XiaoxiaoNeural">晓晓（女声）</option>
+                                <option value="zh-CN-YunxiNeural">云希（男声）</option>
+                                <option value="zh-CN-XiaoyiNeural">晓伊（女声）</option>
+                                <option value="zh-CN-YunjianNeural">云健（男声）</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">语速</label>
+                            <input type="range" class="form-range" id="voiceSpeed" min="0.5" max="2" step="0.1" value="1">
+                            <div class="text-center" id="speedValue">1.0x</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">音量</label>
+                            <input type="range" class="form-range" id="voiceVolume" min="0" max="100" value="100">
+                            <div class="text-center" id="volumeValue">100%</div>
+                        </div>
+                        <div class="mb-3">
+                            <button class="btn btn-primary" id="testVoice">测试配音</button>
+                        </div>
+                    </div>
+                    
+                    <!-- 转场设置 -->
+                    <div class="tab-pane fade" id="transitionSettings">
+                        <div class="mb-3">
+                            <label class="form-label">转场效果</label>
+                            <select class="form-select" id="transitionEffect">
+                                <option value="none">无</option>
+                                <option value="fade">淡入淡出</option>
+                                <option value="slide">滑动</option>
+                                <option value="zoom">缩放</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">转场时长（秒）</label>
+                            <input type="range" class="form-range" id="transitionDuration" min="0.5" max="2" step="0.1" value="1">
+                            <div class="text-center" id="transitionDurationValue">1.0s</div>
+                        </div>
+                    </div>
+                    
+                    <!-- 滤镜设置 -->
+                    <div class="tab-pane fade" id="filterSettings">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">亮度</label>
+                                    <input type="range" class="form-range" id="brightness" min="0.5" max="1.5" step="0.1" value="1.0">
+                                    <div class="text-center" id="brightnessValue">1.0</div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">对比度</label>
+                                    <input type="range" class="form-range" id="contrast" min="0.5" max="1.5" step="0.1" value="1.0">
+                                    <div class="text-center" id="contrastValue">1.0</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">饱和度</label>
+                                    <input type="range" class="form-range" id="saturation" min="0.5" max="1.5" step="0.1" value="1.0">
+                                    <div class="text-center" id="saturationValue">1.0</div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">色调</label>
+                                    <input type="range" class="form-range" id="hue" min="-30" max="30" step="1" value="0">
+                                    <div class="text-center" id="hueValue">0°</div>
+                                </div>
+                            </div>
+                            <div class="col-12">
+                                <div class="mb-3">
+                                    <label class="form-label">预设滤镜</label>
+                                    <select class="form-select" id="filterPreset">
+                                        <option value="none">无</option>
+                                        <option value="warm">暖色调</option>
+                                        <option value="cold">冷色调</option>
+                                        <option value="vintage">复古</option>
+                                        <option value="dramatic">戏剧性</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 剪辑设置 -->
+                    <div class="tab-pane fade" id="clipSettings">
+                        <div class="mb-3">
+                            <label class="form-label">播放速度</label>
+                            <input type="range" class="form-range" id="playbackSpeed" min="0.5" max="2" step="0.1" value="1.0">
+                            <div class="text-center" id="speedValue">1.0x</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">视频尺寸</label>
+                            <select class="form-select" id="videoSize">
+                                <option value="original">原始尺寸</option>
+                                <option value="1080p">1080p</option>
+                                <option value="720p">720p</option>
+                                <option value="480p">480p</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">裁剪比例</label>
+                            <select class="form-select" id="cropRatio">
+                                <option value="original">原始比例</option>
+                                <option value="16:9">16:9</option>
+                                <option value="9:16">9:16</option>
+                                <option value="1:1">1:1</option>
+                                <option value="4:3">4:3</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="saveSettings">保存设置</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<!-- 确保在 base.html 的脚本之后加载 -->
+{{ super() }}
+<!-- 引用外部 JavaScript 文件 -->
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+{% endblock %} 

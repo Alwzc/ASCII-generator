@@ -1,0 +1,127 @@
+.card {
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+}
+
+.progress {
+    height: 25px;
+}
+
+.list-group-item {
+    margin-bottom: 5px;
+}
+
+/* 添加进度条动画样式 */
+.progress-bar-animated {
+    animation: progress-bar-stripes 1s linear infinite;
+}
+
+/* 添加淡入淡出效果 */
+.fade {
+    transition: opacity 0.15s linear;
+}
+
+.fade:not(.show) {
+    opacity: 0;
+}
+
+/* 添加错误提示样式 */
+.alert {
+    position: relative;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border: 1px solid transparent;
+    border-radius: 0.25rem;
+}
+
+.alert-danger {
+    color: #721c24;
+    background-color: #f8d7da;
+    border-color: #f5c6cb;
+}
+
+/* 添加加载动画样式 */
+.spinner-border {
+    display: inline-block;
+    width: 2rem;
+    height: 2rem;
+    vertical-align: text-bottom;
+    border: 0.25em solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spinner-border 0.75s linear infinite;
+}
+
+@keyframes spinner-border {
+    to { transform: rotate(360deg); }
+}
+
+/* 添加卡片悬浮效果 */
+.card {
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+/* 添加按钮点击效果 */
+.btn {
+    transition: all 0.2s ease-in-out;
+}
+
+.btn:active {
+    transform: scale(0.98);
+}
+
+/* 视频预览样式 */
+#previewPlayer {
+    background: #000;
+    border-radius: 4px;
+}
+
+.segment-item {
+    transition: background-color 0.2s;
+}
+
+.segment-item.active {
+    background-color: #e9ecef;
+}
+
+.segment-item:hover {
+    background-color: #f8f9fa;
+}
+
+/* 可拖动排序样式 */
+.segments-sortable .segment-item {
+    cursor: move;
+}
+
+.segments-sortable .segment-item.sortable-ghost {
+    opacity: 0.4;
+}
+
+.segments-sortable .segment-item.sortable-drag {
+    background: #fff;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+/* 进度条样式 */
+.form-range {
+    height: 8px;
+    border-radius: 4px;
+}
+
+.form-range::-webkit-slider-thumb {
+    background: #007bff;
+}
+
+/* 编辑模态框样式 */
+.modal-content {
+    border-radius: 8px;
+}
+
+.modal-header {
+    background-color: #f8f9fa;
+    border-radius: 8px 8px 0 0;
+} 

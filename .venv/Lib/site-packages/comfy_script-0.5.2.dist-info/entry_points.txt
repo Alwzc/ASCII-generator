@@ -1,0 +1,2 @@
+[comfyui.custom_nodes]
+comfy_script = comfy_script.nodes

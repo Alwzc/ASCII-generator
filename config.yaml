@@ -1,0 +1,11 @@
+# 日志配置
+logging:
+  level: "DEBUG"
+  file: "app.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  handlers:
+    - console
+    - file
+
+# 其他配置
+debug: true

@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 视频大模型智能处理</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="/">AI 视频大模型智能处理</a>
+            <div class="d-flex align-items-center">
+                <!-- 添加新建任务按钮 -->
+                <button class="btn btn-primary me-3" data-bs-toggle="modal" data-bs-target="#videoGeneratorModal">
+                    <i class="bi bi-plus-circle me-1"></i> 新建任务
+                </button>
+                <div class="d-flex align-items-center text-light ms-auto gap-4">
+                    <!-- 系统状态信息 -->
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-cpu me-2"></i>
+                        <small class="text-muted me-1">系统:</small>
+                        <span id="systemInfo" class="small">-</span>
+                    </div>
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-gpu-card me-2"></i>
+                        <div class="d-flex flex-column ms-1" style="flex: 1">
+                            <small class="text-muted mb-1" id="gpuName"></small>
+                            <div class="d-flex align-items-center">
+                                <div class="progress bg-dark" style="width: 100px; height: 4px;">
+                                    <div id="gpuProgress" class="progress-bar" role="progressbar"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="d-flex align-items-center" style="min-width: 150px">
+                        <i class="bi bi-memory me-2"></i>
+                        <div class="d-flex flex-column ms-1" style="flex: 1">
+                            <small class="text-muted mb-1">内存</small>
+                            <div class="progress bg-dark" style="height: 4px;">
+                                <div id="vramProgress" class="progress-bar" role="progressbar"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-list-task me-2"></i>
+                        <small class="text-muted me-1">队列:</small>
+                        <span id="queueInfo" class="small">-</span>
+                    </div>
+                    <div class="border-start ps-4">
+                        <small class="text-muted me-2" id="lastUpdateTime">-</small>
+                        <button class="btn btn-sm btn-link text-light p-0" id="refreshSystemInfo">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger ms-2" id="interruptBtn" title="中断当前任务">
+                            <i class="bi bi-stop-circle"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-warning ms-1" id="clearQueueBtn" title="清空队列">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        {% block content %}{% endblock %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.14.0/Sortable.min.js"></script>
+    <script>
+    // 添加全局配置
+    const API_CONFIG = {
+        token: "{{ config.COMFYUI_TOKEN }}",
+        baseUrl: "/api/proxy",  // 使用代理路由
+        endpoints: {
+            systemStats: "/system_stats",
+            queue: "/queue",
+            history: "/history",
+            interrupt: "/interrupt"
+        }
+    };
+
+    // 添加数字格式化函数
+    function formatNumber(num) {
+        return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    }
+
+    // 系统状态更新函数
+    async function updateSystemInfo() {
+        try {
+            // 获取系统状态
+            const statsResponse = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.systemStats}`, {
+                headers: { 
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            if (!statsResponse.ok) {
+                throw new Error(`HTTP error! status: ${statsResponse.status}`);
+            }
+            
+            const statsData = await statsResponse.json();
+            
+            // 更新系统信息
+            document.getElementById('systemInfo').textContent = 
+                `${statsData.system.os.toUpperCase()} / Python ${statsData.system.python_version.split(' ')[0]}`;
+            
+            // 更新GPU信息
+            const gpuInfo = statsData.devices[0];
+            // 只显示 GPU 名称
+            const gpuName = gpuInfo.name.split(' ').slice(2, -2).join(' ');  // 提取 "GeForce RTX 4090"
+            document.getElementById('gpuName').textContent = gpuName;
+            
+            // 更新GPU显存使用情况
+            const gpuVramTotal = gpuInfo.torch_vram_total;
+            const gpuVramFree = gpuInfo.torch_vram_free;
+            const gpuVramPercent = ((gpuVramTotal - gpuVramFree) / gpuVramTotal * 100).toFixed(1);
+            
+            const gpuProgressBar = document.getElementById('gpuProgress');
+            gpuProgressBar.style.width = `${gpuVramPercent}%`;
+            gpuProgressBar.className = `progress-bar ${gpuVramPercent > 80 ? 'bg-danger' : 'bg-success'}`;
+            gpuProgressBar.title = `GPU显存使用: ${gpuVramPercent}%`;
+            
+            // 更新VRAM使用情况
+            const vramTotal = gpuInfo.vram_total;
+            const vramFree = gpuInfo.vram_free;
+            const vramPercent = ((vramTotal - vramFree) / vramTotal * 100).toFixed(1);
+            
+            const progressBar = document.getElementById('vramProgress');
+            progressBar.style.width = `${vramPercent}%`;
+            progressBar.className = `progress-bar ${vramPercent > 80 ? 'bg-danger' : 'bg-success'}`;
+            progressBar.title = `系统显存使用: ${vramPercent}%`;
+            
+            // 获取队列状态
+            const queueResponse = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.queue}`, {
+                headers: { 
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            if (!queueResponse.ok) {
+                throw new Error(`HTTP error! status: ${queueResponse.status}`);
+            }
+            
+            const queueData = await queueResponse.json();
+            const runningCount = queueData.queue_running.length;
+            const pendingCount = queueData.queue_pending.length;
+            document.getElementById('queueInfo').textContent = 
+                `${runningCount + pendingCount} 个任务`;
+            
+            // 更新时间
+            const now = new Date();
+            document.getElementById('lastUpdateTime').textContent = 
+                `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+
+        } catch (error) {
+            console.error('Error updating system info:', error);
+            // 添加错误提示
+            document.getElementById('systemInfo').textContent = 'Error';
+            document.getElementById('gpuInfo').textContent = 'Error';
+        }
+    }
+
+    // 添加事件监听
+    document.addEventListener('DOMContentLoaded', function() {
+        // 自动更新系统信息
+        setInterval(updateSystemInfo, 22000);
+        // 更新任务队列
+        setInterval(updateCurrentTask, 22000);
+        updateCurrentTask();  // 立即执行一次
+        
+        // 添加节流函数
+        function throttle(func, limit) {
+            let inThrottle;
+            return function() {
+                const args = arguments;
+                const context = this;
+                if (!inThrottle) {
+                    func.apply(context, args);
+                    inThrottle = true;
+                    setTimeout(() => inThrottle = false, limit);
+                }
+            }
+        }
+
+        // 手动刷新添加节流
+        document.getElementById('refreshSystemInfo').addEventListener('click', 
+            throttle(updateSystemInfo, 12000)  // 2秒内只能刷新一次
+        );
+
+        // 中断任务
+        document.getElementById('interruptBtn').addEventListener('click', async () => {
+            try {
+                const response = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.interrupt}`, {
+                    headers: { 
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                alert('已中断当前任务');
+                updateSystemInfo();
+            } catch (error) {
+                console.error('Error:', error);
+                alert('中断任务失败');
+            }
+        });
+
+        // 清空队列
+        document.getElementById('clearQueueBtn').addEventListener('click', async () => {
+            try {
+                await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.queue}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${API_CONFIG.token}`
+                    },
+                    body: JSON.stringify({ delete: "all" })
+                });
+                alert('已清空队列');
+                updateSystemInfo();
+            } catch (error) {
+                console.error('Error:', error);
+                alert('清空队列失败');
+            }
+        });
+
+        // 初始加载
+        updateSystemInfo();
+    });
+    </script>
+    <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html> 
