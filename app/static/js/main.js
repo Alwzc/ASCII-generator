@@ -8,6 +8,11 @@ class TaskManager {
     
     // 添加新任务
     addTask(taskData) {
+        // 确保有正确的创建时间
+        if (!taskData.createdAt) {
+            taskData.createdAt = Date.now() / 1000; // 使用当前时间戳（秒）
+        }
+        
         this.tasks.push(taskData);
         this.renderTasks();
         return taskData.id;
@@ -19,91 +24,51 @@ class TaskManager {
         
         console.log('Updating tasks from Redis:', redisData);
         
-        // 获取所有任务ID
-        const existingTaskIds = new Set(this.tasks.map(t => t.prompt_id));
+        // 创建新的任务列表
         const newTasks = [];
         
         // 处理 Redis 中的所有任务
         Object.entries(redisData).forEach(([taskId, taskData]) => {
-            if (existingTaskIds.has(taskId)) {
-                // 更新已存在的任务
-                this.tasks = this.tasks.map(task => {
-                    if (task.prompt_id === taskId) {
-                        // 确保保留任务内容
-                        let content = task.content;
-                        
-                        // 如果没有content但有prompt，使用prompt的前30个字符
-                        if (!content && taskData.prompt) {
-                            content = taskData.prompt;
-                        }
-                        
-                        return {
-                            ...task,
-                            status: taskData.status,
-                            message: taskData.message || task.message,
-                            progress: taskData.progress || 0,
-                            videoUrl: taskData.video_url || taskData.preview_url || task.videoUrl,
-                            errorMessage: taskData.error || (taskData.status === 'error' ? taskData.message : null),
-                            queue_position: taskData.queue_position,
-                            waiting_time: taskData.waiting_time,
-                            processing_time: taskData.processing_time,
-                            prompt: taskData.prompt || task.prompt,
-                            model: taskData.model || task.model,
-                            last_updated: taskData.last_updated,
-                            content: content,
-                            type: taskData.type || task.type || 'video',
-                            output_path: taskData.output_path || task.output_path
-                        };
-                    }
-                    return task;
-                });
-            } else {
-                // 准备任务内容
-                let content = taskData.content;
-                
-                // 如果没有content但有prompt，使用prompt的前30个字符
-                if (!content && taskData.prompt) {
-                    content = taskData.prompt;
-                }
-                
-                // 添加新任务
-                newTasks.push({
-                    id: taskId,
-                    prompt_id: taskId,
-                    content: content || '未知任务',
-                    status: taskData.status,
-                    message: this.getChineseMessage(taskData.message) || this.getStatusText(taskData.status),
-                    progress: taskData.progress || 0,
-                    videoUrl: taskData.video_url || taskData.preview_url,
-                    errorMessage: taskData.error || (taskData.status === 'error' ? taskData.message : null),
-                    createdAt: taskData.created_at ? new Date(taskData.created_at * 1000).toISOString() : new Date().toISOString(),
-                    prompt: taskData.prompt,
-                    model: taskData.model,
-                    queue_position: taskData.queue_position,
-                    waiting_time: taskData.waiting_time,
-                    processing_time: taskData.processing_time,
-                    last_updated: taskData.last_updated,
-                    type: taskData.type || 'video',
-                    output_path: taskData.output_path
-                });
+            // 准备任务内容
+            let content = taskData.content;
+            
+            // 如果没有content但有prompt，使用prompt
+            if (!content && taskData.prompt) {
+                content = taskData.prompt;
             }
+            
+            // 创建任务对象
+            const task = {
+                id: taskId,
+                prompt_id: taskId,
+                content: content || '未知任务',
+                status: taskData.status,
+                message: this.getChineseMessage(taskData.message) || this.getStatusText(taskData.status),
+                progress: taskData.progress || 0,
+                videoUrl: taskData.video_url || taskData.preview_url,
+                errorMessage: taskData.error || (taskData.status === 'error' ? taskData.message : null),
+                createdAt: taskData.created_at ? taskData.created_at : Date.now() / 1000,
+                prompt: taskData.prompt,
+                model: taskData.model,
+                queue_position: taskData.queue_position,
+                waiting_time: taskData.waiting_time,
+                processing_time: taskData.processing_time,
+                last_updated: taskData.last_updated,
+                type: taskData.type || 'video',
+                output_path: taskData.output_path,
+                batch_id: taskData.batch_id,
+                segment_index: taskData.segment_index,
+                total_segments: taskData.total_segments
+            };
+            
+            newTasks.push(task);
         });
         
-        // 添加新任务到列表
-        if (newTasks.length > 0) {
-            console.log('Adding new tasks:', newTasks);
-            this.tasks.push(...newTasks);
-        }
+        // 按创建时间排序，最新的在前面
+        newTasks.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         
-        // 移除已完成或失败超过24小时的任务
-        const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-        this.tasks = this.tasks.filter(task => {
-            if (task.status === 'completed' || task.status === 'error') {
-                const taskDate = new Date(task.createdAt);
-                return taskDate > oneDayAgo;
-            }
-            return true;
-        });
+        // 更新任务列表
+        this.tasks = newTasks;
         
         console.log('Updated tasks:', this.tasks);
         this.renderTasks();
@@ -208,7 +173,7 @@ class TaskManager {
                 } else {
                     previewContent = `
                         <div class="mt-2 text-center">
-                            <video controls autoplay muted loop class="img-fluid rounded" style="max-height: 180px;">
+                            <video controls muted loop class="img-fluid rounded" style="max-height: 180px;">
                                 <source src="${fullOutputPath}" type="video/mp4">
                                 您的浏览器不支持视频标签。
                             </video>
@@ -230,6 +195,19 @@ class TaskManager {
             taskContent = '未命名任务';
         }
         
+        // 在卡片中添加批次信息显示
+        let batchInfo = '';
+        if (task.batch_id && task.segment_index !== undefined && task.total_segments) {
+            batchInfo = `
+                <div class="mt-1">
+                    <span class="badge bg-info text-dark rounded-pill">
+                        <i class="bi bi-collection me-1"></i>
+                        片段 ${task.segment_index + 1}/${task.total_segments}
+                    </span>
+                </div>
+            `;
+        }
+        
         col.innerHTML = `
             <div class="card ${statusClass} h-100 shadow-sm">
                 <div class="card-header d-flex justify-content-between align-items-center py-2">
@@ -244,11 +222,12 @@ class TaskManager {
                     </div>
                 </div>
                 <div class="card-body p-2">
-                    <div class="card-title small fw-bold mb-1" style="font-size: 0.85rem; min-height:3.4em; ${task.status === 'completed' ? 'display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.2em; max-height: 4.4em;' : ''}" title="${task.prompt || taskContent}">
+                    <div class="card-title small fw-bold mb-1" style="font-size: 0.85rem; min-height:3.4em; display: -webkit-box; -webkit-line-clamp: ${task.status === 'completed' ? '3' : '12'}; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.2em; max-height: ${task.status === 'completed' ? '4.4em' : '14em'};" title="${task.prompt || taskContent}">
                         ${taskContent}
                     </div>
                     <div class="card-text small mb-1">
                         ${task.model ? `<span class="badge bg-secondary rounded-pill mb-1">${task.model}</span>` : ''}
+                        ${batchInfo}
                         ${statusDetails}
                         ${task.status === 'processing' ? 
                             `<div class="progress mt-2" style="height: 4px">
@@ -319,24 +298,41 @@ class TaskManager {
     
     // 格式化日期
     formatDate(dateStr) {
-        const date = new Date(dateStr);
-        const now = new Date();
-        const diff = now - date;
-        
-        // 如果是今天的日期，显示"今天 HH:MM"
-        if (date.toDateString() === now.toDateString()) {
-            return `今天 ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+        try {
+            // 如果是时间戳（数字），转换为毫秒
+            let date;
+            if (typeof dateStr === 'number') {
+                date = new Date(dateStr * 1000); // 转换秒为毫秒
+            } else {
+                date = new Date(dateStr);
+            }
+
+            // 检查日期是否有效
+            if (isNaN(date.getTime())) {
+                console.error('Invalid date:', dateStr);
+                return '时间未知';
+            }
+
+            const now = new Date();
+            
+            // 如果是今天的日期，显示"今天 HH:MM"
+            if (date.toDateString() === now.toDateString()) {
+                return `今天 ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+            }
+            
+            // 如果是昨天，显示"昨天 HH:MM"
+            const yesterday = new Date(now);
+            yesterday.setDate(now.getDate() - 1);
+            if (date.toDateString() === yesterday.toDateString()) {
+                return `昨天 ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+            }
+            
+            // 其他日期显示"MM月DD日 HH:MM"
+            return `${date.getMonth() + 1}月${date.getDate()}日 ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+        } catch (error) {
+            console.error('Date formatting error:', error);
+            return '时间未知';
         }
-        
-        // 如果是昨天，显示"昨天 HH:MM"
-        const yesterday = new Date(now);
-        yesterday.setDate(now.getDate() - 1);
-        if (date.toDateString() === yesterday.toDateString()) {
-            return `昨天 ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-        }
-        
-        // 其他日期显示"MM月DD日 HH:MM"
-        return `${date.getMonth() + 1}月${date.getDate()}日 ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
     }
     
     // 预览任务
@@ -563,7 +559,7 @@ class TaskManager {
         } else {
             previewContent = `
                 <div class="text-center">
-                    <video controls class="w-100" autoplay>
+                    <video controls class="w-100">
                         <source src="${fullOutputPath}" type="video/mp4">
                         您的浏览器不支持视频标签。
                     </video>
@@ -672,20 +668,20 @@ class TaskManager {
 
 // 定时从 Redis 获取任务状态
 window.updateCurrentTask = async function() {
-    console.log('Updating current task...');
+    console.log('Fetching task status...');
     try {
         const response = await fetch('/api/task-status');
         if (!response.ok) throw new Error('获取任务状态失败');
         
         const data = await response.json();
-        console.log('Task status data:', data);
+        console.log('Received task status data:', data);
+        console.log('Number of tasks:', Object.keys(data).length);
         
         if (window.taskManager) {
             window.taskManager.updateTasksFromRedis(data);
         }
     } catch (error) {
-        console.error('Error updating current task:', error.message);
-        // 静默失败,避免影响用户体验
+        console.error('Error updating tasks:', error.message);
     }
 }
 
@@ -695,8 +691,21 @@ document.addEventListener('DOMContentLoaded', function() {
     window.taskManager = new TaskManager();
     
     // 定时更新任务状态 - 每20秒
-    setInterval(updateCurrentTask, 20000);
-    updateCurrentTask(); // 立即执行一次
+    let updateInterval = null; // 添加一个变量来存储interval ID
+
+    // 如果已经有定时器在运行，先清除它
+    if (updateInterval) {
+        clearInterval(updateInterval);
+    }
+
+    // 设置新的定时器
+    updateInterval = setInterval(updateCurrentTask, 20000);
+    
+    // 只在初始化时执行一次更新
+    if (!window.initialUpdateDone) {
+        updateCurrentTask();
+        window.initialUpdateDone = true;
+    }
     
     // 刷新任务按钮
     const refreshTasksBtn = document.getElementById('refreshTasksBtn');
@@ -822,11 +831,14 @@ document.addEventListener('DOMContentLoaded', function() {
             this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 生成中...';
             
             try {
+                // 生成批次ID
+                const batchId = 'batch_' + Date.now();
+                const content = document.getElementById('content').value;
+                
                 // 为每个片段单独提交任务
                 for (let i = 0; i < currentPrompts.length; i++) {
                     const prompt = currentPrompts[i];
                     
-                    // 添加/api前缀
                     const response = await fetch('/api/generate-video', {
                         method: 'POST',
                         headers: {
@@ -835,7 +847,10 @@ document.addEventListener('DOMContentLoaded', function() {
                         body: JSON.stringify({
                             prompt: prompt,
                             model: model,
-                            segment_index: i
+                            segment_index: i,
+                            total_segments: currentPrompts.length,
+                            batch_id: batchId,
+                            content: content  // 添加原始内容
                         }),
                     });
                     
@@ -843,20 +858,23 @@ document.addEventListener('DOMContentLoaded', function() {
                     console.log(`片段 ${i+1} 响应:`, data);
                     
                     if (data.success) {
-                        // 添加任务到任务管理器
+                        // 添加任务到任务管理器，包含批次信息
                         const taskId = window.taskManager.addTask({
                             content: `片段 ${i+1}: ${prompt}`,
                             style: document.getElementById('style').value,
                             modelName: document.getElementById('model').options[document.getElementById('model').selectedIndex].text,
                             prompt: prompt,
                             prompt_id: data.prompt_id,
-                            segment_index: i
+                            segment_index: i,
+                            total_segments: currentPrompts.length,
+                            batch_id: batchId
                         });
                         
                         console.log('添加任务:', {
                             taskId: taskId,
                             prompt_id: data.prompt_id,
-                            segment_index: i
+                            segment_index: i,
+                            batch_id: batchId
                         });
                     } else {
                         alert(`片段 ${i+1} 提交失败: ${data.error || '未知错误'}`);

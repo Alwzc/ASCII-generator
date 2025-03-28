@@ -324,7 +324,7 @@ class VideoGenerator:
                             task_info["waiting_time"] = current_time - task_info.get("waiting_started", current_time)
                             task_info["last_updated"] = current_time
                             
-                            # 尝试从工作流中提取提示词
+                            # 尝试从工作流中提取提示词 - 修改这部分以匹配运行中任务的逻辑
                             if "prompt" not in task_info and len(task) >= 3 and isinstance(task[2], dict):
                                 workflow = task[2]
                                 for node_id, node in workflow.items():
@@ -334,6 +334,19 @@ class VideoGenerator:
                                     elif node.get("class_type") == "WanVideoTextEncode" and "inputs" in node and "positive_prompt" in node["inputs"]:
                                         task_info["prompt"] = node["inputs"]["positive_prompt"]
                                         break
+                                    elif node.get("class_type") == "BizyAir_CLIPTextEncode" and "inputs" in node and "text" in node["inputs"]:
+                                        task_info["prompt"] = node["inputs"]["text"]
+                                        break
+                                    elif node.get("class_type") == "KSampler" and "inputs" in node and "positive" in node["inputs"]:
+                                        # 对于KSampler节点，需要进一步查找正向提示词
+                                        positive_node_id = node["inputs"]["positive"]
+                                        if isinstance(positive_node_id, list) and len(positive_node_id) >= 2:
+                                            positive_node_id = positive_node_id[0]
+                                            if str(positive_node_id) in workflow:
+                                                positive_node = workflow[str(positive_node_id)]
+                                                if "inputs" in positive_node and "text" in positive_node["inputs"]:
+                                                    task_info["prompt"] = positive_node["inputs"]["text"]
+                                                    break
                             
                             # 尝试提取模型信息
                             if "model" not in task_info and len(task) >= 3 and isinstance(task[2], dict):
@@ -413,8 +426,12 @@ class VideoGenerator:
             else:
                 logger.error(f"获取队列状态失败: HTTP {queue_response.status_code}")
         
+            # 在更新完队列状态后，返回所有任务状态
+            return self.get_all_tasks_status()
+        
         except Exception as e:
             logger.error(f"更新队列状态失败: {str(e)}", exc_info=True)
+            return {}
 
     def _check_task_history(self, task_id: str) -> Dict:
         """检查任务历史记录"""
@@ -500,32 +517,20 @@ class VideoGenerator:
                                 filename = video_info.get("filename")
                                 
                                 if filename:
-                                    # 构建完整的URL路径
+                                    # 视频文件不需要添加 type=temp 参数
                                     video_url = f"{self.config.COMFYUI_URL}/view?filename={filename}"
                                     local_path = os.path.join(self.config.OUTPUT_DIR, filename)
                                     
                                     # 下载视频到本地
                                     self._download_video(video_url, local_path)
                                     
-                                    # 计算处理时间
-                                    processing_time = None
-                                    if start_time and end_time:
-                                        processing_time = end_time - start_time
-                                    
-                                    result = {
+                                    return {
                                         "status": "completed",
                                         "message": "视频生成完成",
                                         "output_path": local_path,
                                         "type": "video",
-                                        "preview_url": f"/static/output/{filename}",
-                                        "prompt": prompt,
-                                        "model": model
+                                        "preview_url": f"/static/output/{filename}"
                                     }
-                                    
-                                    if processing_time:
-                                        result["processing_time"] = processing_time
-                                    
-                                    return result
                             
                             # 检查是否有animated标记
                             is_animated = False
@@ -537,29 +542,21 @@ class VideoGenerator:
                                 filename = output["images"][0]["filename"]
                                 output_path = os.path.join(self.config.OUTPUT_DIR, filename)
                                 
-                                # 下载文件
-                                file_url = f"{self.config.COMFYUI_URL}/view?filename={filename}"
-                                self._download_video(file_url, output_path)
+                                # 根据是否为动画决定是否添加type=temp参数
+                                if is_animated:
+                                    image_url = f"{self.config.COMFYUI_URL}/view?filename={filename}"
+                                else:
+                                    image_url = f"{self.config.COMFYUI_URL}/view?filename={filename}&type=temp"
+                                    
+                                self._download_video(image_url, output_path)
                                 
-                                # 计算处理时间
-                                processing_time = None
-                                if start_time and end_time:
-                                    processing_time = end_time - start_time
-                                
-                                result = {
+                                return {
                                     "status": "completed",
                                     "message": "视频生成完成" if is_animated else "图片生成完成",
                                     "output_path": output_path,
                                     "type": "video" if is_animated else "image",
-                                    "preview_url": f"/static/output/{filename}",
-                                    "prompt": prompt,
-                                    "model": model
+                                    "preview_url": f"/static/output/{filename}"
                                 }
-                                
-                                if processing_time:
-                                    result["processing_time"] = processing_time
-                                
-                                return result
                     
                     # 如果没有找到具体输出但状态是成功
                     status = task_history.get("status", {})
@@ -621,7 +618,7 @@ class VideoGenerator:
             logger.error(f"检查任务历史记录失败: {str(e)}", exc_info=True)
             return {
                 "status": "error",
-                "message": f"Failed to check history: {str(e)}"
+                "message": f"检查任务历史记录失败"
             }
 
     def _start_queue_updater(self):
@@ -668,52 +665,62 @@ class VideoGenerator:
             }
 
     def generate_prompts(self, content: str, style: str, model: str, num_segments: int = 3) -> Dict:
-        """调用 GPT 生成视频片段的提示词并返回JSON格式结果"""
+        """Call GPT to generate video segment prompts and return results in JSON format"""
         try:
             style_prompts = {
-                "ancient": "使用中国传统古风元素,如水墨画风格、古代建筑、古装人物、青砖古墙、翠竹幽径、红色灯笼、古代家具、书法字画等",
-                "anime": "使用日本动漫风格,明亮的色彩、夸张的表情、简洁的线条、动漫人物特征、大眼睛、华丽的发型、校园场景等", 
-                "cute": "使用可爱萌系风格,圆润的造型、柔和的色彩、温馨的氛围、萌宠元素、粉色系、毛绒玩具、甜点、花朵等",
-                "modern": "使用现代都市风格,时尚的场景、现代建筑、写实风格、城市元素、高楼大厦、咖啡厅、商场、地铁等",
-                "nature": "使用自然风光风格,壮丽的景色、自然元素、光影效果、山水画卷、森林、湖泊、瀑布、日出日落等"
+                "ancient": """Style: Traditional Chinese ink wash painting (水墨画).
+                    Each scene MUST be explicitly described in ink wash painting style with:
+                    - Ink wash painting techniques: Use varying ink densities from light to dark
+                    - Brushwork: Flowing, graceful brushstrokes characteristic of ink painting
+                    - Color palette: Primarily black ink with subtle grey gradients
+                    - Composition: Follow traditional Chinese painting principles with empty space
+                    - Elements: Traditional Chinese motifs like mountains, waters, buildings, and figures
+                    - Characters: When present, must be depicted in traditional ink painting style
+                    - Atmosphere: Misty, ethereal quality typical of ink wash paintings
+                    - Details: Describe specific ink wash techniques for each element
+                    Every scene description must explicitly mention it's rendered in ink wash painting style.""",
+                "anime": "Style: Japanese anime. Use bright colors, exaggerated expressions, clean lines, anime character features, large eyes, elaborate hairstyles, school settings, etc.", 
+                "cute": "Style: Kawaii/cute. Use rounded shapes, soft colors, warm atmosphere, cute pets, pink tones, plush toys, desserts, flowers, etc.",
+                "modern": "Style: Modern urban. Use fashionable scenes, modern architecture, realistic style, city elements, skyscrapers, cafes, shopping malls, subway stations, etc.",
+                "nature": "Style: Natural landscapes. Use magnificent scenery, natural elements, lighting effects, mountains and waters, forests, lakes, waterfalls, sunrises and sunsets, etc."
             }
             
             style_desc = style_prompts.get(style, "")
             
-            # 根据不同模型调整提示词
-            model_prefix = f"使用{model}模型生成。" if model and model != "default" else ""
+            # Adjust prompts based on different models
+            model_prefix = f"Using {model} model to generate. " if model and model != "default" else ""
             
-            # 添加随机性提示和更强调用户内容
+            # Add randomness hints and emphasize user content
             prompt = f"""
-            {model_prefix}请根据以下文案内容，创造性地拆分为{num_segments}个连续且各不相同的场景，并为每个场景生成详细的文生视频提示词。
+            {model_prefix}Based on the following content, please creatively split it into {num_segments} continuous and distinct scenes, and generate detailed text-to-video prompts for each scene.
 
-            文案内容:
+            Content:
             {content}
 
-            风格要求:
+            Style Requirements:
             {style_desc}
 
-            要求:
-            1. 直接生成{num_segments}个详细且各不相同的视频生成提示词，每个提示词不少于100字
-            2. 每个提示词必须紧密围绕文案内容展开，确保场景与文案主题高度相关
-            3. 每个提示词要包含具体的视觉元素描述，如场景、人物、动作、表情、光线、色彩等细节
-            4. 场景之间要保持连贯性和故事性，但每个场景必须有明显的区别
-            5. 提示词要充分体现选定的风格特点，融入该风格的独特视觉元素
-            6. 避免生成重复或相似的场景描述，确保每个场景都有独特的视觉表现
-            7. 使用丰富的形容词和具体的名词，确保AI能生成高质量、细节丰富的视频画面
+            Requirements:
+            1. Directly generate {num_segments} detailed and distinct video generation prompts, each prompt should be at least 100 words
+            2. Each prompt must closely revolve around the content, ensuring scenes are highly relevant to the main theme
+            3. Each prompt should include specific visual element descriptions like scenes, characters, actions, expressions, lighting, colors, etc.
+            4. Maintain continuity and storytelling between scenes, but each scene must have clear distinctions
+            5. Prompts should fully reflect the chosen style characteristics and incorporate unique visual elements
+            6. Avoid generating repetitive or similar scene descriptions, ensure each scene has unique visual presentation
+            7. Use rich adjectives and specific nouns to ensure AI generates high-quality, detail-rich video scenes
 
-            请直接返回一个JSON格式，格式如下：
+            Please return directly in JSON format as follows:
             {{
               "prompts": [
-                "第一个场景的详细描述...",
-                "第二个场景的详细描述...",
-                "第三个场景的详细描述..."
+                "First scene detailed description...",
+                "Second scene detailed description...",
+                "Third scene detailed description..."
               ],
               "success": true
             }}
             """
             
-            # 调用 GPT API
+            # Call GPT API
             headers = {
                 "Authorization": f"Bearer {self.config.GPT_API_KEY}",
                 "Content-Type": "application/json"
@@ -722,9 +729,9 @@ class VideoGenerator:
             data = {
                 "model": "gpt-4o-mini",
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.8,  # 增加随机性
-                "presence_penalty": 0.6,  # 减少重复
-                "frequency_penalty": 0.6  # 减少重复
+                "temperature": 0.8,  # Increase randomness
+                "presence_penalty": 0.6,  # Reduce repetition
+                "frequency_penalty": 0.6  # Reduce repetition
             }
             
             try:
@@ -948,7 +955,7 @@ class VideoGenerator:
             prompt_id = result["prompt_id"]
             logger.info(f"成功提交工作流，获取到prompt_id: {prompt_id}")
             
-            # 添加任务到Redis
+            # 添加任务到Redis时包含批次信息
             task_data = {
                 "status": "pending",
                 "message": "Task initialized",
@@ -1026,45 +1033,41 @@ class VideoGenerator:
             
             history = response.json()
             
-            # 检查是否完成
-            if history.get("outputs"):
-                outputs = history["outputs"]
+            # 检查是否有视频输出
+            if "video" in history["outputs"] or "gifs" in history["outputs"]:
+                video_info = history["outputs"].get("video", [history["outputs"].get("gifs", [])[0]])[0]
+                filename = video_info["filename"]
                 
-                # 检查是否有视频输出
-                if "video" in outputs:
-                    video_info = outputs["video"][0]
-                    filename = video_info["filename"]
-                    
-                    # 构建完整的URL路径，使用Authorization头
-                    video_url = f"{self.config.COMFYUI_URL}/view?filename={filename}"
-                    local_path = os.path.join(self.config.OUTPUT_DIR, filename)
-                    
-                    # 下载视频到本地，传递headers
-                    self._download_video(video_url, local_path)
-                    
-                    return {
-                        "status": "completed",
-                        "output_path": local_path,
-                        "video_url": f"/static/output/{filename}"  # 相对于Web服务的URL
-                    }
+                # 视频文件不需要添加 type=temp 参数
+                video_url = f"{self.config.COMFYUI_URL}/view?filename={filename}"
+                local_path = os.path.join(self.config.OUTPUT_DIR, filename)
                 
-                # 检查是否有图像输出
-                elif "images" in outputs:
-                    image_info = outputs["images"][0]
-                    filename = image_info["filename"]
-                    
-                    # 构建完整的URL路径，使用Authorization头
-                    image_url = f"{self.config.COMFYUI_URL}/view?filename={filename}"
-                    local_path = os.path.join(self.config.OUTPUT_DIR, filename)
-                    
-                    # 下载图像到本地，传递headers
-                    self._download_video(image_url, local_path)
-                    
-                    return {
-                        "status": "completed",
-                        "output_path": local_path,
-                        "image_url": f"/static/output/{filename}"  # 相对于Web服务的URL
-                    }
+                # 下载视频到本地
+                self._download_video(video_url, local_path)
+                
+                return {
+                    "status": "completed",
+                    "output_path": local_path,
+                    "video_url": f"/static/output/{filename}"
+                }
+            
+            # 检查是否有图像输出
+            elif "images" in history["outputs"]:
+                image_info = history["outputs"]["images"][0]
+                filename = image_info["filename"]
+                
+                # 所有非视频文件都需要添加 type=temp 参数
+                image_url = f"{self.config.COMFYUI_URL}/view?filename={filename}&type=temp"
+                local_path = os.path.join(self.config.OUTPUT_DIR, filename)
+                
+                # 下载到本地
+                self._download_video(image_url, local_path)
+                
+                return {
+                    "status": "completed",
+                    "output_path": local_path,
+                    "image_url": f"/static/output/{filename}"
+                }
             
             # 检查队列状态
             queue_response = requests.get(
@@ -1161,7 +1164,6 @@ class VideoGenerator:
         """清理过期任务和错误任务"""
         try:
             current_time = time.time()
-            max_age = 7 * 24 * 60 * 60  # 改为7天，而不是24小时
             
             # 检查错误状态的任务
             all_tasks = self.redis.hgetall("tasks_status")
@@ -1186,23 +1188,60 @@ class VideoGenerator:
                         self.redis.hset("completed_tasks", task_id, json.dumps(history_result))
                         self.redis.hdel("tasks_status", task_id)
                         logger.info(f"未知状态任务 {task_id} 已更新为 {history_result.get('status')}")
-            
-            # 清理过期的已完成任务 - 改为7天而不是24小时
-            completed_tasks = self.redis.hgetall("completed_tasks")
-            for task_id_bytes, task_data_bytes in completed_tasks.items():
-                task_id = task_id_bytes.decode('utf-8') if isinstance(task_id_bytes, bytes) else task_id_bytes
-                task_data = json.loads(task_data_bytes) if isinstance(task_data_bytes, bytes) else json.loads(task_data_bytes)
-                
-                # 检查任务是否过期 - 使用更长的保留期
-                if "completed_at" in task_data and current_time - task_data["completed_at"] > max_age:
-                    self.redis.hdel("completed_tasks", task_id)
-                    logger.info(f"已删除过期任务 {task_id}")
-                elif "last_updated" in task_data and current_time - task_data["last_updated"] > max_age:
-                    self.redis.hdel("completed_tasks", task_id)
-                    logger.info(f"已删除过期任务 {task_id}")
         
         except Exception as e:
             logger.error(f"清理任务失败: {str(e)}", exc_info=True)
+
+    def get_all_tasks_status(self) -> Dict:
+        """获取所有任务的状态，包括活跃任务和已完成任务"""
+        try:
+            # 获取所有活跃任务状态
+            active_tasks = self.redis.hgetall("tasks_status")
+            # 获取所有已完成任务
+            completed_tasks = self.redis.hgetall("completed_tasks")
+            
+            # 添加更多调试日志
+            logger.debug(f"Redis中的原始completed_tasks数据: {completed_tasks}")
+            logger.debug(f"Redis中的原始active_tasks数据: {active_tasks}")
+            
+            # 合并所有任务状态
+            all_tasks = {}
+            
+            # 处理活跃任务
+            for task_id_bytes, task_data_bytes in active_tasks.items():
+                task_id = task_id_bytes.decode('utf-8') if isinstance(task_id_bytes, bytes) else task_id_bytes
+                try:
+                    task_data = task_data_bytes.decode('utf-8') if isinstance(task_data_bytes, bytes) else task_data_bytes
+                    task_info = json.loads(task_data)
+                    all_tasks[task_id] = task_info
+                except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                    logger.error(f"解析活跃任务数据失败 - task_id: {task_id}, error: {str(e)}")
+                    logger.error(f"问题数据: {task_data_bytes}")
+                    continue
+            
+            # 处理已完成任务
+            for task_id_bytes, task_data_bytes in completed_tasks.items():
+                task_id = task_id_bytes.decode('utf-8') if isinstance(task_id_bytes, bytes) else task_id_bytes
+                try:
+                    task_data = task_data_bytes.decode('utf-8') if isinstance(task_data_bytes, bytes) else task_data_bytes
+                    task_info = json.loads(task_data)
+                    all_tasks[task_id] = task_info
+                except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                    logger.error(f"解析已完成任务数据失败 - task_id: {task_id}, error: {str(e)}")
+                    logger.error(f"问题数据: {task_data_bytes}")
+                    continue
+            
+            # 添加详细的调试日志
+            logger.debug(f"处理后的任务总数: {len(all_tasks)}")
+            logger.debug(f"处理后的活跃任务数: {len([t for t in all_tasks.values() if t.get('status') not in ['completed', 'error']])}")
+            logger.debug(f"处理后的已完成任务数: {len([t for t in all_tasks.values() if t.get('status') in ['completed', 'error']])}")
+            logger.debug(f"所有任务ID: {list(all_tasks.keys())}")
+            
+            return all_tasks
+            
+        except Exception as e:
+            logger.error(f"获取任务状态失败: {str(e)}", exc_info=True)
+            return {}
 
     def update_queue_status(self):
         """

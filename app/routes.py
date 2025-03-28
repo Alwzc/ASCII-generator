@@ -401,7 +401,6 @@ def test_voice():
 def proxy(subpath):
     """代理转发请求到 ComfyUI 服务器"""
     try:
-        # 创建配置实例
         config = Config()
         
         # 构建目标 URL，添加token参数
@@ -426,6 +425,12 @@ def proxy(subpath):
                 json=request.json
             )
         
+        # 如果是 /prompt 接口，转换响应格式
+        if subpath == 'prompt':
+            data = response.json()
+            queue_remaining = len(data.get('queue_remaining', []))
+            return data
+            
         return jsonify(response.json()), response.status_code
         
     except Exception as e:
@@ -651,39 +656,15 @@ def test_connection():
             "error": str(e)
         })
 
-@main.route('/api/task-status', methods=['GET'])
+@main.route('/api/task-status')
 def get_task_status():
-    """获取所有任务的状态"""
+    """获取所有任务状态，包括活跃任务和已完成任务"""
     try:
-        # 初始化Redis连接 - 使用current_app而不是app
-        redis_client = init_redis(current_app)
-        
-        # 获取活跃任务
-        active_tasks = redis_client.hgetall("tasks_status")
-        
-        # 获取已完成任务
-        completed_tasks = redis_client.hgetall("completed_tasks")
-        
-        # 合并任务数据
-        all_tasks = {}
-        
-        # 处理活跃任务
-        for task_id, task_data in active_tasks.items():
-            task_id = task_id.decode('utf-8') if isinstance(task_id, bytes) else task_id
-            task_data = task_data.decode('utf-8') if isinstance(task_data, bytes) else task_data
-            all_tasks[task_id] = json.loads(task_data)
-        
-        # 处理已完成任务
-        for task_id, task_data in completed_tasks.items():
-            task_id = task_id.decode('utf-8') if isinstance(task_id, bytes) else task_id
-            task_data = task_data.decode('utf-8') if isinstance(task_data, bytes) else task_data
-            all_tasks[task_id] = json.loads(task_data)
-        
+        video_generator = VideoGenerator()
+        all_tasks = video_generator.get_all_tasks_status()
         return jsonify(all_tasks)
-    
     except Exception as e:
-        # 使用current_app而不是app
-        current_app.logger.error(f"获取任务状态失败: {str(e)}")
+        logger.error(f"获取任务状态失败: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @main.route('/api/health')
